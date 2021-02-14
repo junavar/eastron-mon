@@ -12,7 +12,8 @@ Timely perform a limitation of the power delivered by the inverter so you can co
 This proyect is part of a bigger proyect to visualize and control the electrical energy of private homes and small bussiness.
 
 Use: 
-<p><b>fronius-mon [-i num_inv] [[-l] [-p pot_inv]] [-d] [dev_file]</b>
+<p><b>Use: fronius-mon [-i inverter_num] [[-l] [-p inverter_power]] [-d] [dec_file]</b>
+
 <dl>
 <dt>-i</dt> <dd>number of inverter in rs422 network/connetion. 1 is the default</dd>
 <dt>-l</dt> <dd>limit generating power to avoid export of energy to grid. Requires -p option</dd>
