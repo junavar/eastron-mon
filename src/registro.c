@@ -377,7 +377,6 @@ void consolidar_en_periodo(){
 		entrada_registro.potencia_reactiva_min_tiempo = pdatos_instantaneos->marca_tiempo;
 	}
 
-
 	/*
 	 * Cálculo máximo y mínimo de tensión
 	 */
@@ -409,9 +408,6 @@ void consolidar_en_periodo(){
 		entrada_registro.potencia_media_importada_15min_max= pdatos_instantaneos->potencia_media_importada_15min;
 		entrada_registro.potencia_media_importada_15min_max_tiempo=pdatos_instantaneos->marca_tiempo;
 	}
-
-
-
 }
 
 
@@ -579,26 +575,33 @@ void siguiente_15min(struct timeval *tv_siguiente_15min){
 
 int indice_intervalo_15min;
 
+
+static float energia_imp_ini_periodo;
+static float energia_exp_ini_periodo;
+static float energia_consumida_ini_periodo;
+static float energia_generada_ini_periodo;
+static float energia_generable_ini_periodo;
+
+
 void registro_15min(){
 
-	static int energia_imp_ini_periodo;
-	static int energia_exp_ini_periodo;
-	static int energia_consumida_ini_periodo;
-	static int energia_generada_ini_periodo;
-	static int energia_generable_ini_periodo;
-
+#if 0
 	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp=pdatos_instantaneos->energia_total_importada-energia_imp_ini_periodo;
 	energia_imp_ini_periodo=pdatos_instantaneos->energia_total_importada;
 
 	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_exp=pdatos_instantaneos->energia_total_exportada-energia_exp_ini_periodo;
 	energia_exp_ini_periodo=pdatos_instantaneos->energia_total_exportada;
-
-#if 0
-	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_consumida=pdatos_instantaneos-> energia_total_importada-energia_imp_ini_periodo;
-	energia_consumida_ini_periodo=pdatos_instantaneos->energia_total_importada + energia_total_generada;
+	printf("\nIndice_intervalo_15min:%d\n", indice_intervalo_15min);
 #endif
 
-printf("\nIndice_intervalo_15min:%d\n", indice_intervalo_15min);
+	energia_imp_ini_periodo=pdatos_instantaneos->energia_total_importada;
+	energia_exp_ini_periodo=pdatos_instantaneos->energia_total_exportada;
+
+//	energia_consumida_ini_periodo=pdatos_publicados->;
+//	energia_generada_ini_periodo=pdatos_publicados->;
+
+	energia_generable_ini_periodo=pdatos_instantaneos->energia_total_importada;
+
 }
 
 

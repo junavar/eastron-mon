@@ -14,7 +14,7 @@
 #define MAX_PIDS_PARA_SIGNAL 4
 
 //claves de los segmentos de memoria compartida
-#define SHM_KEY		0x00001235  //identificador de memoria compartida para struct datos_instantaneos. Solo actulizada por eastron_mon
+#define SHM_KEY		0x00001235  //identificador de memoria compartida para struct datos_instantaneos. Solo actualizada por eastron_mon
 
 #define SHM_KEY_2 					0x00001234  //identificador de memoria compartida para struct datos_publicados.
 #define SHM_KEY_DATOS_PUBLICADOS 	0x00001234  //identificador de memoria compartida para struct datos_publicados.
@@ -109,7 +109,7 @@ struct entradaregistrodiario{
 	float energia_exp;
 	float energia_consumida;
 	float energia_generada;
-	float energia_generable; // energia que se podia habe generado si no se hubiese aplicado limitación de exportación
+	float energia_generable; // energia que se podia haber generado si no se hubiese aplicado limitación de exportación
 	float potencia_max;
 	float potencia_min;
 };
@@ -126,7 +126,8 @@ struct datos_publicados {
 	float frecuencia_consumo;
 	float factor_potencia_consumo;
 	float energia_total_consumo;
-	float energia_parcial_consumo;
+	//float energia_parcial_consumo;
+	float energia_generada_dia;
 	float potencia_generada;
 	float limitacion_potencia_generada;
 	float potencia_generable;

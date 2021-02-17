@@ -30,6 +30,7 @@ struct datos_instantaneos *pdatos_instantaneos;
 struct linea_subscripcion *plinea_subscripcion;
 struct datos_publicados *pdatos_publicados;
 
+extern struct entrada_registro entrada_registro;
 
 static int recibido_senal_fin=0;
 
@@ -634,27 +635,25 @@ int main(int argc, char **argv) {
 			pdatos_instantaneos->err_potencia=rc; /*potencia activa registro 0x0C*/
 			if (pdatos_instantaneos->err_potencia==0){
 				registro=0x0C;
-				pdatos_instantaneos->potencia=pasar_4_bytes_a_float((unsigned char *)&buff_receive[registro-registro_inicial]);
 
-				pdatos_publicados->potencia_consumo=(int)pdatos_instantaneos->potencia + pdatos_publicados->potencia_generada;
+				pdatos_instantaneos->potencia=pasar_4_bytes_a_float((unsigned char *)&buff_receive[registro-registro_inicial]);
+				pdatos_publicados->potencia_consumo=pdatos_instantaneos->potencia + pdatos_publicados->potencia_generada;
+
+#if 0
+				//en todo caso
+				pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_consumida += pdatos_publicados->potencia_consumo * (pdatos_instantaneos->retraso + 1);
+
 
 				//energia en watios*segundo
 				if (pdatos_instantaneos->potencia>=0){  // hay importación
-					pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp+=
-								(int)pdatos_instantaneos->potencia * (pdatos_instantaneos->retraso + 1);
-
-				}else{ // hay exportación
-					pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_exp+=
-								-(int)pdatos_instantaneos->potencia * (pdatos_instantaneos->retraso + 1);
+					pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp += pdatos_instantaneos->potencia * (pdatos_instantaneos->retraso + 1);
 				}
-
-				//en todo caso
-				pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_consumida+=
-												pdatos_publicados->potencia_consumo * (pdatos_instantaneos->retraso + 1);
-
+				else{ // hay exportación
+					pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_exp += -pdatos_instantaneos->potencia * (pdatos_instantaneos->retraso + 1);
+				}
+#endif
 			}
 			if (err_rcp==0) err_rcp=(pdatos_instantaneos->err_potencia==0)?0:1;
-
 		}
 
 		if (sol_tension==1){
@@ -783,6 +782,13 @@ int main(int argc, char **argv) {
 
 		pdatos_instantaneos->potencia_media_importada_15min=potencia_media_importada_15m();
 		consolidar_en_periodo();
+
+		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp = entrada_registro.energia_imp_diferenciacion;
+		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_exp = entrada_registro.energia_exp_diferenciacion;
+		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_consumida =
+				pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp +
+				pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_generada;
+
 
 		// se notifica con señales realtime a los procesos que se han registrado
 		// en la tabla de subscripcion. Se recorre la tabla para ver que procesos hay que notificar
