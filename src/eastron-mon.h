@@ -9,15 +9,13 @@
 #define SRC_EASTRON_MON_H_
 
 #define NOMBRE_PROGRAMA "eastron-mon"
-#define VERSION_PROGRAMA "0.972"
-#define FECHA_PROGRAMA "15-febrero-2021"
+#define VERSION_PROGRAMA "0.993"
+#define FECHA_PROGRAMA "4 marzo 2021"
 #define AUTOR_PROGRAMA "junavarg (junavarg@hotmail.com)"
 #define TEXTO_PROGRAMA "Programa de monitorizacion de importacion/exportacion energia electrica"
 
 #define FILE_LOCK_NAME_LOCATION "/var/run/"  // importante la barra a derecha final
 
 extern char linea_syslog[];
-
-
 
 #endif /* SRC_EASTRON_MON_H_ */

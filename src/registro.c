@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 199309
+//#define _POSIX_C_SOURCE 199309
 #include <stdint.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -15,6 +15,7 @@
 #include <sys/time.h>
 #include <sys/timerfd.h>
 #include <pthread.h>
+#include <float.h>
 
 
 #include "registro.h"
@@ -23,20 +24,12 @@
 struct entrada_registro entrada_registro;
 
 /*
- * Energias del periodo horario anterior
+ * Energias del intervalo 15min anterior
  */
 float energia_imp_anterior=0.0;
 float energia_exp_anterior=0.0;
 float energia_reactiva_ind_anterior=0.0; //reactiva inductiva (mal dicho importada) anterior
 float energia_reactiva_cap_anterior=0.0; //reactiva capacitiva (mal dicho exportada) anterior
-
-/*
- * Energias del dia anterior
- */
-float energia_imp_dia_anterior=0.0; //activa importada dia anterior
-float energia_exp_dia_anterior=0.0; //activa exportada dia anterior
-float energia_reactiva_ind_dia_anterior=0.0; //reactiva inductiva (mal dicho importada) dia anterior
-float energia_reactiva_cap_dia_anterior=0.0; //reactiva capacitiva (mal dicho exportada) dia anterior
 
 
 char subdirectorio_datos[512]=SUBDIRECTORIO_REGISTRO;
@@ -47,8 +40,10 @@ char fichero_indice_datos_consumo[512]=FICHERO_INDICE_REGISTRO; //inicialmente s
  * incluso cuando están presente las lineas de encabezados diarios de magnitudes
  */
 char linea[1024]; //linea de registro de datos de consumo.
-
-
+struct tm *ploc_time;
+struct tm  loc_time; // empleado para copiar la estructura de datos apuntada por ploc_time
+int gmtoff_arranque=0; //offset horario en segundos cuando arranca el inversor
+int indice_intervalo_15min=0;
 
 /*
  * Inserta por delante una cadena "ainsertar" en otra
@@ -144,7 +139,7 @@ int leer_energia_total_ultimo_registro(){
 		}
 	}
 
-	// pone en fichero_datos_consumo y en ficehro_indice_datos_consumo el path completo
+	// pone el fichero_datos_consumo y en fichero_indice_datos_consumo el path completo
 	insstr(subdirectorio_datos, fichero_datos_consumo);
 	insstr(subdirectorio_datos, fichero_indice_datos_consumo);
 
@@ -164,8 +159,6 @@ int leer_energia_total_ultimo_registro(){
 	 * TODO: Interpolar resultados cuando existen huecos de horas de registro antes de reinicir las funiones de registro horario
 	 */
 
-
-
 	/*
 	 * Accede y lee ultima linea de fichero
 	 * y cierra fichero
@@ -174,8 +167,6 @@ int leer_energia_total_ultimo_registro(){
 	leidos=read(fdatos, linea, sizeof(linea));
 	if (leidos){}; //TODO control de error
 	close(fdatos);
-
-
 
 	/*
 	 * busca últimos datos de energía
@@ -237,7 +228,7 @@ float potencia_media_importada_15m(){
  	float incremento_energia;
 	float potencia_media_15m;
 	static int indice_actual;
-	static time_t tiempo_anterior; //ultimo tiempo sobre el que se almacenan datos de tiempo y energia
+	static time_t tiempo_anterior=0; //ultimo tiempo sobre el que se almacenan datos de tiempo y energia
 	static float energia_anterior;
 	int indice_referencia;
 	int incremento_tiempo=0; //entre toma de muestras consecutivas
@@ -297,6 +288,9 @@ float potencia_media_importada_15m(){
  */
 int registrado_un_periodo;
 
+
+// TODO: Verificar si se usa o debe usarse esta función
+#if 1
 void reiniciar_periodo(){
 
 	entrada_registro.muestras_en_periodo=0;
@@ -313,34 +307,64 @@ void reiniciar_periodo(){
 		energia_reactiva_cap_anterior=pdatos_instantaneos->energia_reactiva_total_capacitiva;
 	}
 
-	entrada_registro.potencia_max=-1000000.0;// TODO poner mínimo valor formalmente
+	entrada_registro.potencia_max=-FLT_MAX;
 	entrada_registro.potencia_max_tiempo=0;
-	entrada_registro.potencia_min= 1000000.0; // TODO poner maximo valor formalmente
+	entrada_registro.potencia_min= FLT_MAX;
 	entrada_registro.potencia_min_tiempo=0;
 
-	entrada_registro.potencia_reactiva_max=-1000000.0;// TODO poner mínimo valor formalmente
+	entrada_registro.potencia_reactiva_max=-FLT_MAX;
 	entrada_registro.potencia_reactiva_max_tiempo=0;
-	entrada_registro.potencia_reactiva_min= 1000000.0; // TODO poner maximo valor formalmente
+	entrada_registro.potencia_reactiva_min= FLT_MAX;
 	entrada_registro.potencia_reactiva_min_tiempo=0;
 
 	entrada_registro.tension_max=0;
 	entrada_registro.tension_max_tiempo=0;
-	entrada_registro.tension_min=1000000.0; // TODO poner maximo valor formalmente
+	entrada_registro.tension_min=FLT_MAX;
 	entrada_registro.tension_min_tiempo=0;
 
 	entrada_registro.frecuencia_max=0;
 	entrada_registro.frecuencia_max_tiempo=0;
-	entrada_registro.frecuencia_min=1000000.0; // TODO poner maximo valor formalmente
+	entrada_registro.frecuencia_min=FLT_MAX;
 	entrada_registro.frecuencia_min_tiempo=0;
 
 	entrada_registro.potencia_media_importada_15min_max=0;
 	entrada_registro.potencia_media_importada_15min_max_tiempo=0;
 
 }
+#endif
+
+void accion_cada_segundo(){
+	static int primera_muestra=0; //flag para controlar primera muestra
+	int i;
+	// la primera vez: toma energias iniciales y calcula el intervalo 15 minutos y pone el tiempo del intervalo en datos_publicados
+	if (primera_muestra==0){
+
+		gmtoff_arranque=loc_time.tm_gmtoff;
+
+		energia_imp_anterior=pdatos_instantaneos->energia_total_importada;
+		energia_exp_anterior=pdatos_instantaneos->energia_total_exportada;
+
+		indice_intervalo_15min = (loc_time.tm_hour + loc_time.tm_gmtoff / SEGUNDOS_HORA - gmtoff_arranque / SEGUNDOS_HORA) * (MINUTOS_HORA / MINUTOS_INTERVALO)
+						+ (loc_time.tm_min  + loc_time.tm_gmtoff % SEGUNDOS_HORA - gmtoff_arranque % SEGUNDOS_HORA) / MINUTOS_INTERVALO;
+		//se marcan como registros incompletos los anteriores (salvo que un futuro se puedan recuperar de BD, o se interpolen)
+		for (i=0; i<indice_intervalo_15min; i++){
+			pdatos_publicados->entradaregistrodiario[i].tipo_registro=2;
 
 
+			pdatos_publicados->entradaregistrodiario[i].hora=i/4;
+			pdatos_publicados->entradaregistrodiario[i].min=(i%4) * 15;
+			pdatos_publicados->entradaregistrodiario[i].offset=gmtoff_arranque / SEGUNDOS_MINUTO;
 
-void consolidar_en_periodo(){
+
+		}
+		// datos de tiempo del intervalo
+		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].tipo_registro=2; // se marca como incompleto ya que el programa puede arrancar en cualquier momento (no en limite de 15min)
+		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].hora=loc_time.tm_hour;
+		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].min=loc_time.tm_min;
+		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].offset=loc_time.tm_gmtoff / SEGUNDOS_MINUTO;
+
+		primera_muestra=1;
+	}
 
 	entrada_registro.muestras_en_periodo+=1;
 
@@ -352,6 +376,13 @@ void consolidar_en_periodo(){
 	entrada_registro.energia_exp_diferenciacion=pdatos_instantaneos->energia_total_exportada - energia_exp_anterior;
 	entrada_registro.energia_reactiva_ind_diferenciacion=pdatos_instantaneos->energia_reactiva_total_inductiva - energia_reactiva_ind_anterior;
 	entrada_registro.energia_reactiva_cap_diferenciacion=pdatos_instantaneos->energia_reactiva_total_capacitiva - energia_reactiva_cap_anterior;
+
+	// Se anota en intervalos de datos _publicados expresado en watios*hora
+	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp = (pdatos_instantaneos->energia_total_importada - energia_imp_anterior)*1000; // en watios*hora
+	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_exp = (pdatos_instantaneos->energia_total_exportada - energia_exp_anterior)*1000; // en watios*hora
+	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_consumida =
+			pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp +
+			pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_generada; // no se multiplica por 1000 ya que los dos sumandos  ya están en watios*hora
 
 	/*
 	 * Calculo máxima y minimos de potencia activa
@@ -410,48 +441,59 @@ void consolidar_en_periodo(){
 	}
 }
 
+void accion_cada_15min(){
 
-//TODO Eliminar esta función. Hacer uso directo de strftime
-void minuto_y_segundo(time_t tiempo, char * smin_sec, int longitud){
-	// ojo esta funcion no es reentrante. Problemas con sprintf(), printf().
-	strftime (smin_sec, longitud, "%M:%S", localtime(&tiempo));
+	energia_imp_anterior=pdatos_instantaneos->energia_total_importada;
+	energia_exp_anterior=pdatos_instantaneos->energia_total_exportada;
+	energia_reactiva_ind_anterior=pdatos_instantaneos->energia_reactiva_total_inductiva;
+	energia_reactiva_cap_anterior=pdatos_instantaneos->energia_reactiva_total_capacitiva;
+
+	//se calcula el intervalo de 15 min teniendo en cuenta los cambios DST que se produzcan en el año
+	indice_intervalo_15min = (loc_time.tm_hour + loc_time.tm_gmtoff / SEGUNDOS_HORA - gmtoff_arranque / SEGUNDOS_HORA) * (MINUTOS_HORA / MINUTOS_INTERVALO)
+					+ (loc_time.tm_min  + loc_time.tm_gmtoff % SEGUNDOS_HORA - gmtoff_arranque % SEGUNDOS_HORA) / MINUTOS_INTERVALO;
+
+	// datos de tiempo de nuevo intervalo
+	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].hora=loc_time.tm_hour;
+	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].min=loc_time.tm_min;
+	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].offset=loc_time.tm_gmtoff / SEGUNDOS_MINUTO;
+	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].tipo_registro=1;
 }
 
-int registro_horario(){
+void accion_cada_hora(){
 	int fdatos; // file descriptor fichero de datos del inversor
-	time_t curtime;
-	struct tm *loc_time;
 	char buf_tiempo[20]; //buffer para string de tiempo
 
-	//Minuto en el que se empieza a registrar
-	curtime = time(NULL);
-	loc_time = localtime (&curtime); // Converting current time to local time
+	//TODO oner tiempo ISO con timezone
+	strftime (buf_tiempo, sizeof(buf_tiempo), "%d-%m-%Y %H:%M:%S", &loc_time);
 
-	fdatos= abre_fichero_registro();
-	strftime (buf_tiempo, sizeof(buf_tiempo), "%d-%m-%Y %H:%M:%S", loc_time);
 
-    //TODO: eliminar funcion minuto_y_segundo()
+    // Tiempos de maximos y minimos
     char str_potencia_max_tiempo[10];
-    minuto_y_segundo(entrada_registro.potencia_max_tiempo, str_potencia_max_tiempo, sizeof(str_potencia_max_tiempo) );
+    strftime (str_potencia_max_tiempo, sizeof(str_potencia_max_tiempo), "%M:%S", localtime(&entrada_registro.potencia_max_tiempo));
+
     char str_potencia_min_tiempo[10];
-    minuto_y_segundo(entrada_registro.potencia_min_tiempo, str_potencia_min_tiempo, sizeof(str_potencia_min_tiempo));
+    strftime (str_potencia_min_tiempo, sizeof(str_potencia_min_tiempo), "%M:%S", localtime(&entrada_registro.potencia_min_tiempo));
 
     char str_potencia_reactiva_max_tiempo[10];
-    minuto_y_segundo(entrada_registro.potencia_reactiva_max_tiempo, str_potencia_reactiva_max_tiempo, sizeof(str_potencia_reactiva_max_tiempo) );
+    strftime (str_potencia_reactiva_max_tiempo, sizeof(str_potencia_reactiva_max_tiempo), "%M:%S", localtime(&entrada_registro.potencia_reactiva_max_tiempo));
+
     char str_potencia_reactiva_min_tiempo[10];
-    minuto_y_segundo(entrada_registro.potencia_reactiva_min_tiempo, str_potencia_reactiva_min_tiempo, sizeof(str_potencia_reactiva_min_tiempo));
+    strftime (str_potencia_reactiva_min_tiempo, sizeof(str_potencia_reactiva_min_tiempo), "%M:%S", localtime(&entrada_registro.potencia_reactiva_min_tiempo));
 
     char str_tension_max_tiempo[10];
-    minuto_y_segundo(entrada_registro.tension_max_tiempo, str_tension_max_tiempo, sizeof(str_tension_max_tiempo));
-    char str_tension_min_tiempo[10];
-    minuto_y_segundo(entrada_registro.tension_min_tiempo, str_tension_min_tiempo, sizeof(str_tension_min_tiempo));
-    char str_frecuencia_max_tiempo[10];
-    minuto_y_segundo(entrada_registro.frecuencia_max_tiempo, str_frecuencia_max_tiempo, sizeof(str_frecuencia_max_tiempo));
-    char str_frecuencia_min_tiempo[10];
-    minuto_y_segundo(entrada_registro.frecuencia_min_tiempo, str_frecuencia_min_tiempo, sizeof(str_frecuencia_min_tiempo));
+    strftime (str_tension_max_tiempo, sizeof(str_tension_max_tiempo), "%M:%S", localtime(&entrada_registro.tension_max_tiempo));
 
-    char str_potencia_media_importada_15min_max_tiempo[10];
-    minuto_y_segundo(entrada_registro.potencia_media_importada_15min_max_tiempo, str_potencia_media_importada_15min_max_tiempo, sizeof(str_potencia_media_importada_15min_max_tiempo));
+    char str_tension_min_tiempo[10];
+    strftime (str_tension_min_tiempo, sizeof(str_tension_min_tiempo), "%M:%S", localtime(&entrada_registro.tension_min_tiempo));
+
+    char str_frecuencia_max_tiempo[10];
+    strftime (str_frecuencia_max_tiempo, sizeof(str_frecuencia_max_tiempo), "%M:%S", localtime(&entrada_registro.frecuencia_max_tiempo));
+
+    char str_frecuencia_min_tiempo[10];
+    strftime (str_frecuencia_min_tiempo, sizeof(str_frecuencia_min_tiempo), "%M:%S", localtime(&entrada_registro.frecuencia_min_tiempo));
+
+    char str_potencia_media_importada_15min_max_tiempo[10]; //maximo de 15minutos
+    strftime (str_potencia_media_importada_15min_max_tiempo, sizeof(str_potencia_media_importada_15min_max_tiempo), "%M:%S", localtime(&entrada_registro.potencia_media_importada_15min_max_tiempo));
 
 	sprintf(linea, "RH-> %s E_per: %05.3f %05.3f %05.3f %05.3f E_total: %07.1f %07.1f %07.1f %07.1f max_per: %4d %04.0f (%s) %04.0f (%s) %04.0f (%s) %04.0f (%s) %04.0f (%s) %04.0f (%s) %05.2f (%s) %05.2f (%s) %05.0f (%s)\n",
 			buf_tiempo,
@@ -489,176 +531,17 @@ int registro_horario(){
 			entrada_registro.potencia_media_importada_15min_max,
 			str_potencia_media_importada_15min_max_tiempo);
 
-	write(fdatos, linea, strlen(linea));
+	fdatos= abre_fichero_registro();
+	//TODO escribir este error en stderr y en syslog
+	int escritos=0;
+	escritos=write(fdatos, linea, strlen(linea));
+	if (escritos<0) {
+		printf("\nError escritura en FICHERO_REGISTRO. errno: %d\n", errno);
+	}
 	close(fdatos);
 	printf("\r%s", linea); // asegura principio de linea y escribe la linea de registro por pantalla
 	registrado_un_periodo=1; //Indica que se ha registrado al menos un periodo desde que arrancó el programa
-	return 0;
 }
-
-
-
-
-/*
-struct timeval {
-	time_t tv_sec; // -->Seconds since 00:00:00, 1 Jan 1970 UTC
-	suseconds_t tv_usec; //--> Additional microseconds (long int)
-};
-*/
-
-/*
-struct tm {
-	int tm_sec; // --> Seconds (0-60)
-	int tm_min; // --> Minutes (0-59)
-	int tm_hour;// --> Hours (0-23)
-	int tm_mday; // --> Day of the month (1-31)
-	int tm_mon;  // --> Month (0-11)
-	int tm_year; // --> Year since 1900
-	int tm_wday; // --> Day of the week (Sunday = 0)
-	int tm_yday; // --> Day in the year (0-365; 1 Jan = 0)
-	int tm_isdst; // --> Daylight saving time flag
-				  //           > 0: DST is in effect;
-				  //           = 0: DST is not effect;
-				  //           < 0: DST information not available
-};
-*/
-
-
-
-
-
-void siguiente_hora(struct timeval *tv_siguiente_hora){
-	struct timeval tv_actual;
-	struct tm *ptiempo_bd, tiempo_bd;
-	/* obtiene el tiempo actual */
-	gettimeofday(&tv_actual, NULL);
-//TODO: Eliminar	printf("\nTiempo actual %s",ctime(&tv_actual.tv_sec));
-	/* Descompone el tiempo y obtiene hora*/
-	ptiempo_bd=localtime(&tv_actual.tv_sec);
-	tiempo_bd=*ptiempo_bd;
-	tiempo_bd.tm_hour+=1; // se ha verificado que el paso 23h-->00h dia siguiente se realiza correctamente
-	tiempo_bd.tm_min=0;
-	tiempo_bd.tm_sec=1; // se pone un segundo mas tarde para no coincidir con el otro timer
-	tv_siguiente_hora->tv_sec=mktime(&tiempo_bd);
-	tv_siguiente_hora->tv_usec=0;
-}
-
-
-/*
-struct itimerspec {
-	struct timespec it_interval; // --> Interval for periodic timer
-	struct timespec it_value; 	//-->  First expiration
-};
-Each of the fields of the itimerspec structure is in turn a structure of type timespec,
-which specifies time values as a number of seconds and nanoseconds:
-
-struct timespec {
-	time_t tv_sec; //--> Seconds
-	long tv_nsec;     "E_per: 0.700 0.000 0.000 0.646 E_total: 01437.226 00002.148 00009.863 00869.491 max_per: 3600 1818 (45:45) 0570 (59:48) 0082 (05:25) -816 (41:24) 0236 (49:21) 0229 (04:38) 50.07 (54:44) 49.90 (02:24)  //--> Nanoseconds
-};
-*/
-
-void siguiente_15min(struct timeval *tv_siguiente_15min){
-	struct timeval tv_actual;
-		struct tm *ptiempo_bd, tiempo_bd;
-		/* obtiene el tiempo actual */
-		gettimeofday(&tv_actual, NULL);
-	    /* Descompone el tiempo y obtiene hora*/
-		ptiempo_bd=localtime(&tv_actual.tv_sec);
-		tiempo_bd=*ptiempo_bd;
-		tiempo_bd.tm_min+=15;
-		tiempo_bd.tm_sec=0;
-		tv_siguiente_15min->tv_sec=mktime(&tiempo_bd);
-		tv_siguiente_15min->tv_usec=0;
-
-}
-
-int indice_intervalo_15min;
-
-
-static float energia_imp_ini_periodo;
-static float energia_exp_ini_periodo;
-static float energia_consumida_ini_periodo;
-static float energia_generada_ini_periodo;
-static float energia_generable_ini_periodo;
-
-
-void registro_15min(){
-
-#if 0
-	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp=pdatos_instantaneos->energia_total_importada-energia_imp_ini_periodo;
-	energia_imp_ini_periodo=pdatos_instantaneos->energia_total_importada;
-
-	pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_exp=pdatos_instantaneos->energia_total_exportada-energia_exp_ini_periodo;
-	energia_exp_ini_periodo=pdatos_instantaneos->energia_total_exportada;
-	printf("\nIndice_intervalo_15min:%d\n", indice_intervalo_15min);
-#endif
-
-	energia_imp_ini_periodo=pdatos_instantaneos->energia_total_importada;
-	energia_exp_ini_periodo=pdatos_instantaneos->energia_total_exportada;
-
-//	energia_consumida_ini_periodo=pdatos_publicados->;
-//	energia_generada_ini_periodo=pdatos_publicados->;
-
-	energia_generable_ini_periodo=pdatos_instantaneos->energia_total_importada;
-
-}
-
-
-
-void funcion_a_ejecutar_cada_15min(){
-	int fd;
-	uint64_t numExp;
-	int s;
-
-	struct timeval tiempo;
-	struct itimerspec ts;
-
-	fd = timerfd_create(CLOCK_REALTIME, 0);
-	if (fd == -1) {/* TODO error*/}
-	while (1){
-		siguiente_15min(&tiempo);
-		ts.it_value.tv_sec=tiempo.tv_sec;
-		ts.it_value.tv_nsec=tiempo.tv_usec*1000;
-		ts.it_interval.tv_sec=0;
-		ts.it_interval.tv_nsec=0;
-		if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &ts, NULL) == -1){/*TODO error*/}
-		/*
-		 * la ejecucion queda suspendida en la función read() hasta que el temporizador se dispare
-		 */
-		s = read(fd, &numExp, sizeof(uint64_t));
-		if (s != sizeof(uint64_t)) {/* TODO error*/}
-		registro_15min();
-	}
-}
-
-void funcion_a_ejecutar_cada_hora(){
-	int fd;
-	uint64_t numExp;
-	int s;
-
-	struct timeval tiempo;
-	struct itimerspec ts;
-
-	fd = timerfd_create(CLOCK_REALTIME, 0);
-	if (fd == -1) {/* TODO error*/}
-	while (1){
-		reiniciar_periodo();
-		siguiente_hora(&tiempo);
-		ts.it_value.tv_sec=tiempo.tv_sec;
-		ts.it_value.tv_nsec=tiempo.tv_usec*1000;
-		ts.it_interval.tv_sec=0;
-		ts.it_interval.tv_nsec=0;
-		if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &ts, NULL) == -1){/*TODO error*/}
-		/*
-		 * la ejecucion queda suspendida en la función read() hasta que el temporizador se dispare (alcance una hora en punto)
-		 */
-		s = read(fd, &numExp, sizeof(uint64_t));
-		if (s != sizeof(uint64_t)) {/* TODO error*/}
-		registro_horario();
-	}
-}
-
 
 /*
  * al inicio de cada dia:
@@ -666,86 +549,44 @@ void funcion_a_ejecutar_cada_hora(){
  * Incluye la posicion del cursor del fichero de datos de consumo en el fichero de indice
  *
  */
-void accion_diaria(){
+void accion_cada_dia(){
 	int fdatos;// file descriptor fichero de datos del inversor
 	int findice; // file descriptor fichero de indice a datos del inversor
 	int posicion; //posicion del cursor del fichero
-	time_t curtime;
-	struct tm *loc_time;
 	char buf_tiempo[20]; //buffer para string de tiempo
 	char linea[24]; // buffer linea de fichero
+
+	// determina el gmt_offset inicial
+	gmtoff_arranque=loc_time.tm_gmtoff;
 
 	// resetea el registro cuartohorario del dia y su indice;
 	int e;
 	for (e=0; e<NUM_INTERVALOS_DIA_15MIN; e++){
+
+		pdatos_publicados->entradaregistrodiario[e].tipo_registro   	=0;
+		pdatos_publicados->entradaregistrodiario[e].hora				=0;
+		pdatos_publicados->entradaregistrodiario[e].min					=0;
+		pdatos_publicados->entradaregistrodiario[e].offset				=0;
 		pdatos_publicados->entradaregistrodiario[e].energia_generada 	=0;
 		pdatos_publicados->entradaregistrodiario[e].energia_consumida	=0;
 		pdatos_publicados->entradaregistrodiario[e].energia_exp      	=0;
 		pdatos_publicados->entradaregistrodiario[e].energia_imp 		=0;
-		pdatos_publicados->entradaregistrodiario[e].potencia_max 		=0;
-		pdatos_publicados->entradaregistrodiario[e].potencia_min		=100000;
-	}
-	indice_intervalo_15min=0;
 
+	}
+
+	indice_intervalo_15min=0;
 
 	fdatos=abre_fichero_registro();
 	findice= abre_fichero_indice_registro();
 	pinta_linea_magnitudes(fdatos);
 
-	curtime = time(NULL);
-	loc_time = localtime (&curtime); // Converting current time to local time
-	strftime (buf_tiempo, sizeof(buf_tiempo), "%d-%m-%Y", loc_time);
+	strftime (buf_tiempo, sizeof(buf_tiempo), "%d-%m-%Y", &loc_time);
 	posicion = lseek(fdatos, 0, SEEK_CUR);
 	sprintf(linea,"%s %012d\n",buf_tiempo, posicion);
 	write(findice, linea, sizeof(linea));
 	close(fdatos);
 	close(findice);
 }
-
-
-void siguiente_dia(struct timeval *tv_siguiente_dia){
-	struct timeval tv_actual;
-	struct tm *ptiempo_bd, tiempo_bd;
-	/* obtiene el tiempo actual */
-	gettimeofday(&tv_actual, NULL);
-//TODO: Eliminar	printf("\nTiempo actual %s",ctime(&tv_actual.tv_sec));
-	/* Descompone el tiempo y obtiene hora*/
-	ptiempo_bd=localtime(&tv_actual.tv_sec);
-	tiempo_bd=*ptiempo_bd;
-	tiempo_bd.tm_mday+=1; // un dia mas tarde
-	tiempo_bd.tm_hour=0; // se ha verificado que el paso 23h-->00h dia siguiente se realiza correctamente
-	tiempo_bd.tm_min=0;
-	tiempo_bd.tm_sec+=2; // se pone dos segundos más tarde para no coincidir con los otros timers
-	tv_siguiente_dia->tv_sec=mktime(&tiempo_bd);
-	tv_siguiente_dia->tv_usec=0;
-}
-
-void funcion_a_ejecutar_cada_dia(){
-	int fd;
-	uint64_t numExp;
-	int s;
-
-	struct timeval tiempo;
-	struct itimerspec ts;
-
-	fd = timerfd_create(CLOCK_REALTIME, 0);
-	if (fd == -1) {/* TODO error*/}
-	while (1){
-		siguiente_dia(&tiempo);
-		ts.it_value.tv_sec=tiempo.tv_sec;
-		ts.it_value.tv_nsec=tiempo.tv_usec*1000;
-		ts.it_interval.tv_sec=0;
-		ts.it_interval.tv_nsec=0;
-		if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &ts, NULL) == -1){/*TODO error*/}
-		/*
-		 * la ejecucion queda suspendida en la función read() hasta que el temporizador se dispare (alcance el dia siguiente)
-		 */
-		s = read(fd, &numExp, sizeof(uint64_t));
-		if (s != sizeof(uint64_t)) {/* TODO error*/}
-		accion_diaria();
-	}
-}
-
 
 
 

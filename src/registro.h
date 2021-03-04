@@ -98,8 +98,17 @@ struct datos_instantaneos{
 
 extern struct datos_instantaneos *pdatos_instantaneos;
 
-struct entradaregistrodiario{
 
+#define SEGUNDOS_HORA 3600
+#define MINUTOS_HORA 60
+#define SEGUNDOS_MINUTO 60
+
+#define MINUTOS_INTERVALO 15
+//25 horas para el cambio de hora de invierno
+
+#define NUM_INTERVALOS_DIA_15MIN 25*4
+
+struct entradaregistrodiario{
 	int hora;
 	int min;
 	int offset; // desplazamiento zona horaria
@@ -110,12 +119,9 @@ struct entradaregistrodiario{
 	float energia_consumida;
 	float energia_generada;
 	float energia_generable; // energia que se podia haber generado si no se hubiese aplicado limitación de exportación
-	float potencia_max;
-	float potencia_min;
 };
 
-//25 horas para el cambio de hora de invierno
-#define NUM_INTERVALOS_DIA_15MIN 25*4
+
 
 struct datos_publicados {
 
@@ -126,19 +132,40 @@ struct datos_publicados {
 	float frecuencia_consumo;
 	float factor_potencia_consumo;
 	float energia_total_consumo;
-	//float energia_parcial_consumo;
+
+	time_t marca_tiempo_gen; // marca de tiempo de datos de generacion
 	float energia_generada_dia;
 	float potencia_generada;
 	float limitacion_potencia_generada;
-	float potencia_generable;
-	//TODO poner variables que indique el numero de registros y posiblemente desde cual es valido
-	// int num_entradas;
-	// int entrada_inicial_valida
+
 	struct entradaregistrodiario entradaregistrodiario[NUM_INTERVALOS_DIA_15MIN]; // se realiza una entrada por cada 1/4 de hora
 };
 
+
+
+
 extern struct datos_publicados *pdatos_publicados;
 extern int indice_intervalo_15min;
+extern struct tm *ploc_time;
+extern struct tm loc_time;
+extern int gmtoff_arranque; //offset horario en segundos cuando arranca el inversor
+
+/*
+ * Energias del periodo horario anterior
+ */
+extern float energia_imp_anterior;
+extern float energia_exp_anterior;
+extern float energia_reactiva_ind_anterior; //reactiva inductiva (mal dicho importada) anterior
+extern float energia_reactiva_cap_anterior; //reactiva capacitiva (mal dicho exportada) anterior
+
+/*
+ * Energias del dia anterior
+ */
+extern float energia_imp_dia_anterior; //activa importada dia anterior
+extern float energia_exp_dia_anterior; //activa exportada dia anterior
+extern float energia_reactiva_ind_dia_anterior; //reactiva inductiva (mal dicho importada) dia anterior
+extern float energia_reactiva_cap_dia_anterior; //reactiva capacitiva (mal dicho exportada) dia anterior
+
 
 
 extern pid_t *pid_para_signal;
@@ -147,17 +174,16 @@ struct linea_subscripcion{
 	int pid;
 	int rt_senal;
 };
+
 //extern struct linea_subscripcion linea_subscripcion, *tabla_subscripcion;
 
-int registro_horario();
-void funcion_a_ejecutar_cada_15min();
-void funcion_a_ejecutar_cada_hora();
-void funcion_a_ejecutar_cada_dia();
-void consolidar_en_periodo();
 void reiniciar_periodo();
 int leer_energia_total_ultimo_registro();
 float potencia_media_importada_15m();
 
-
+void accion_cada_segundo();
+void accion_cada_15min();
+void accion_cada_hora();
+void accion_cada_dia();
 
 #endif /* SRC_REGISTRO_H_ */

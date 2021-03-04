@@ -16,7 +16,7 @@
 #include <sys/timerfd.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
-
+#include <float.h>
 
 
 #include "modbus-rtu-static.h"
@@ -30,7 +30,6 @@ struct datos_instantaneos *pdatos_instantaneos;
 struct linea_subscripcion *plinea_subscripcion;
 struct datos_publicados *pdatos_publicados;
 
-extern struct entrada_registro entrada_registro;
 
 static int recibido_senal_fin=0;
 
@@ -225,24 +224,6 @@ void terminar() {
 	recibido_senal_fin=1;
 }
 
-
-/*
- * Obtiene el siguiente segundo sobre el tiempo real desde el momento actual
- */
-void siguiente_segundo (struct timeval *tv_siguiente_segundo){
-	struct timeval tv_actual;
-	struct tm *ptiempo_bd, tiempo_bd;
-	/* obtiene el tiempo actual */
-	gettimeofday(&tv_actual, NULL);
-	/* Descompone el tiempo y obtiene siguiente segundo*/
-	ptiempo_bd=localtime(&tv_actual.tv_sec);
-	tiempo_bd=*ptiempo_bd;
-	tiempo_bd.tm_sec+=1;
-	tv_siguiente_segundo->tv_sec=mktime(&tiempo_bd);
-	tv_siguiente_segundo->tv_usec=0;
-}
-
-
 /*
  * pasa a flotante los 2 registros de 16 bits que devuelve libmodbus.
  */
@@ -410,8 +391,6 @@ int main(int argc, char **argv) {
 		signal(SIGINT, terminar);
 	}
 
-
-
 	// escribe el PID en el fichero de bloqueo.
 	// Se pone aquí para asegurar que el PID de proceso child si es un daemon
 	// o del proceso padre si no se ejecuta como proceso normal
@@ -428,8 +407,6 @@ int main(int argc, char **argv) {
 				"El PID %s del proceso ha sido escrito en el fichero %s (%d bytes)",
 				cadena_pid, filelockname, a_escribir);
 	}
-
-
 
 	modbus_t *ctx;
 	ctx = abrir_modbus(arguments.args[0], arguments.speed, arguments.slave);
@@ -454,61 +431,30 @@ int main(int argc, char **argv) {
 
 	/*
 	 * La empleada por fronius-mon
-	*/
-		int shmid2;
-		shmid2 = shmget(SHM_KEY_2, sizeof (struct datos_publicados), IPC_CREAT | 0666);
-		pdatos_publicados = shmat(shmid2, NULL, 0);
-
-	/*
-	 * threads de cada 15min, cada hora y cada dia
 	 */
-	pthread_t t1, t2, t3 ;
-	int s1, s2, s3;
-	s3=pthread_create(&t3, NULL, (void *)funcion_a_ejecutar_cada_15min, NULL);
-		if(s3){}
-	s2=pthread_create(&t2, NULL, (void *)funcion_a_ejecutar_cada_hora, NULL);
-	if(s2){}
-	s1=pthread_create(&t1, NULL, (void *)funcion_a_ejecutar_cada_dia, NULL);
-	if(s1){}
-
+	int shmid2;
+	shmid2 = shmget(SHM_KEY_2, sizeof (struct datos_publicados), IPC_CREAT | 0666);
+	pdatos_publicados = shmat(shmid2, NULL, 0);
 
 
 	/*
 	 * Temporizador de cada segundo
-	 */
-	int fd_timer_segundo; //
+	*/
+	int fd_timer_segundo;
 	fd_timer_segundo = timerfd_create(CLOCK_REALTIME, 0);
-
 	struct timeval tiempo;
 	struct itimerspec ts;
-	int s;
 	uint64_t numExp=0;
-	/*
-	 * alinea el inicio del temporizador con el inicio de segundo de tiempo real
-	 */
-	siguiente_segundo(&tiempo);
-	ts.it_value.tv_sec=tiempo.tv_sec;
+	int s;
+	/* obtiene el tiempo actual en segundos y nanosegundos*/
+	gettimeofday(&tiempo, NULL);
+	/* ajusta salto de temporizador con el siguiente segunto en tiempo absoluto*/
+	ts.it_value.tv_sec=tiempo.tv_sec+1;
 	ts.it_value.tv_nsec=0;
-	ts.it_interval.tv_sec=0;
+	/* ajusta salto periodico a 1s */
+	ts.it_interval.tv_sec=1;
 	ts.it_interval.tv_nsec=0;
-	if (timerfd_settime(fd_timer_segundo, TFD_TIMER_ABSTIME, &ts, NULL) == -1){
-		/*TODO error*/
-
-		printf("\nError en timerfd_settime()");
-	}
-
-	/*
-	 * reajuste de temporizador periodico a 1 segundo
-	 */
-	struct itimerspec timer = {
-	        .it_interval = {1, 0},  /* segundos y nanosegundos  */
-	        .it_value    = {1, 0},
-	};
-
-	if (timerfd_settime(fd_timer_segundo, 0, &timer, NULL) == -1){
-		/*TODO error*/
-		printf("\nError en timerfd_settime()");
-	}
+	timerfd_settime(fd_timer_segundo, TFD_TIMER_ABSTIME, &ts, NULL);
 
 	/*
 	 * Variables para control de solicitud de parametros en cada ciclo
@@ -547,31 +493,23 @@ int main(int argc, char **argv) {
 
 		pdatos_instantaneos->retraso=numExp-1; //falta de puntualidad es el numero de turnos expirados - 1
 
-
-		struct tm *loc_time;
+		//TODO: Poner como variable global, con el resto de tiempos
 		char buf[150]; //buffer para string de tiempo
 
 		/*
 		 *  tiempo de solicitud al medidor
 		 */
-
 		pdatos_instantaneos->marca_tiempo= time(NULL);
-		loc_time = localtime(&pdatos_instantaneos->marca_tiempo); // Converting current time to local time
-		int hora;
-		int minuto;
-		hora = loc_time->tm_hour;
-		minuto = loc_time->tm_min;
-		indice_intervalo_15min = hora*4 + minuto/15;
+		ploc_time = localtime(&pdatos_instantaneos->marca_tiempo); // Converting current time to local time
+		loc_time=*ploc_time; // se copia para evitar perder la info de tiempo descompuesto al volver a emplear la funcion localtime() o gmtime()
 
-		strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S%z", loc_time);
-		snprintf(pdatos_publicados->tiempo,sizeof(pdatos_publicados->tiempo), "%s", buf);
-
+		strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S%z", &loc_time);
+		snprintf(pdatos_publicados->tiempo, sizeof(pdatos_publicados->tiempo), "%s", buf);
 
 		if (numExp >1) {
-			sprintf(linea_syslog,"Perdido el turno de lecturas numExp=%d con el dispositivo modbus %d",
-							(int)numExp,  arguments.slave);
-					fprintf(stderr,"%s\n",linea_syslog);
-					syslog(LOG_INFO,"%s",linea_syslog);
+			sprintf(linea_syslog,"Perdido el turno de lecturas numExp=%d con el dispositivo modbus %d", (int)numExp,  arguments.slave);
+			fprintf(stderr,"%s\n",linea_syslog);
+			syslog(LOG_INFO,"%s",linea_syslog);
 		}
 
 		// pinta el tiempo en el momento de hacer la solicitud y si ha habido saltos de turno
@@ -595,8 +533,6 @@ int main(int argc, char **argv) {
 		short num_registros_lectura;
 		int num;
 		int rc1, rc2;
-
-
 
 		/*
 		 *  Primer grupo de 16 valores = 32 registros de 16bits modbus
@@ -635,23 +571,8 @@ int main(int argc, char **argv) {
 			pdatos_instantaneos->err_potencia=rc; /*potencia activa registro 0x0C*/
 			if (pdatos_instantaneos->err_potencia==0){
 				registro=0x0C;
-
 				pdatos_instantaneos->potencia=pasar_4_bytes_a_float((unsigned char *)&buff_receive[registro-registro_inicial]);
 				pdatos_publicados->potencia_consumo=pdatos_instantaneos->potencia + pdatos_publicados->potencia_generada;
-
-#if 0
-				//en todo caso
-				pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_consumida += pdatos_publicados->potencia_consumo * (pdatos_instantaneos->retraso + 1);
-
-
-				//energia en watios*segundo
-				if (pdatos_instantaneos->potencia>=0){  // hay importación
-					pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp += pdatos_instantaneos->potencia * (pdatos_instantaneos->retraso + 1);
-				}
-				else{ // hay exportación
-					pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_exp += -pdatos_instantaneos->potencia * (pdatos_instantaneos->retraso + 1);
-				}
-#endif
 			}
 			if (err_rcp==0) err_rcp=(pdatos_instantaneos->err_potencia==0)?0:1;
 		}
@@ -698,7 +619,6 @@ int main(int argc, char **argv) {
 			if (err_rcp==0) err_rcp=(pdatos_instantaneos->err_potencia_reactiva==0)?0:1;
 		}
 
-
 		usleep(100000);
 		/*
 		 * segundo grupo de lectura que contiene la frecuencia (0x46),
@@ -729,7 +649,6 @@ int main(int argc, char **argv) {
 			fprintf(stderr, "\nreabriendo 2 modbus\n");
 			ctx=abrir_modbus(arguments.args[0], arguments.speed,arguments.slave);
 			continue;
-
 		}
 
 		if (sol_frecuencia==1){
@@ -779,16 +698,10 @@ int main(int argc, char **argv) {
 			if (err_rcp==0) err_rcp=(pdatos_instantaneos->err_energia_reactiva_total_capacitiva==0)?0:1;
 		}
 
-
+		// TODO: considerar meter el calculo de la potencia media importada dentro de la funcion consolidar_en_periodo()
 		pdatos_instantaneos->potencia_media_importada_15min=potencia_media_importada_15m();
-		consolidar_en_periodo();
 
-		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp = entrada_registro.energia_imp_diferenciacion;
-		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_exp = entrada_registro.energia_exp_diferenciacion;
-		pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_consumida =
-				pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_imp +
-				pdatos_publicados->entradaregistrodiario[indice_intervalo_15min].energia_generada;
-
+		accion_cada_segundo();
 
 		// se notifica con señales realtime a los procesos que se han registrado
 		// en la tabla de subscripcion. Se recorre la tabla para ver que procesos hay que notificar
@@ -801,6 +714,22 @@ int main(int argc, char **argv) {
 				}
 			}
 		}
+
+		// acciones en el segundo que se cumple cada 1/4 hora
+		if (loc_time.tm_min%15==0 && loc_time.tm_sec==0){
+			accion_cada_15min();
+		}
+
+		// acciones en el segundo que se cumple cada hora
+		if (loc_time.tm_min==0 && loc_time.tm_sec==0){
+			accion_cada_hora();
+		}
+
+		// acciones en el minuto y segundo que se cumple inicio de dia
+		if (loc_time.tm_hour==0 && loc_time.tm_min==00 && loc_time.tm_sec==0){
+			accion_cada_dia();
+		}
+
 		/*
 		 * saca valores por consola si es un proceso normal en lugar de un daemon
 		 */
@@ -824,7 +753,6 @@ int main(int argc, char **argv) {
 					printf("\n");
 			}
 		}
-
 	}
 	//sale de bucle por cambio variable recibido_senal_fin en la funcion terminar que se ejecuta por señal SIGGINT o SIGTERM
 	close(fd_lock); // cierra fichero de lock con PID
